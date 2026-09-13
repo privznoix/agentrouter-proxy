@@ -49,8 +49,10 @@ python -m pip install fastapi uvicorn httpx
 Untuk komputer lain yang sudah punya Node.js 18+ dan Python 3.11+:
 
 ```powershell
-npm install -g github:privznoix/agentrouter-proxy
+npm install -g --allow-git=all github:privznoix/agentrouter-proxy
 ```
+
+> **Catatan npm 12+:** Flag `--allow-git=all` wajib karena npm 12 menonaktifkan pengambilan paket dari git secara default. Atau jalankan `npm config set allow-git all` sekali di mesin tersebut.
 
 Salin `.env.example` ke `~/.agentrouter-proxy/.env` (atau letakkan `.env` di direktori kerja), lalu isi `AGENTROUTER_API_KEY`. Prioritas pembacaan: environment variable proses → `./.env` → `~/.agentrouter-proxy/.env`.
 
