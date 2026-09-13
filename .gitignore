@@ -1,0 +1,9 @@
+node_modules/
+.venv/
+logs/
+.env
+__pycache__/
+*.pyc
+*.7z
+npm-debug.log*
+*.tgz

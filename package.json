@@ -1,0 +1,27 @@
+{
+  "name": "agentrouter-proxy",
+  "version": "1.0.0",
+  "description": "Local OpenAI-compatible proxy for AgentRouter with moderation resilience (keyword sanitizer + Indonesian auto-translate retry)",
+  "license": "MIT",
+  "bin": {
+    "agentrouter-proxy": "bin/cli.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "agentrouter-proxy.py",
+    "requirements.txt",
+    ".env.example",
+    "README.md"
+  ],
+  "keywords": [
+    "agentrouter",
+    "proxy",
+    "llm",
+    "openai-compatible",
+    "opencode"
+  ]
+}
