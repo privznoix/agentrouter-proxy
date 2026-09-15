@@ -1,0 +1,10 @@
+.git
+.github
+.venv
+__pycache__
+**/__pycache__
+logs
+node_modules
+.env
+*.ps1
+*.log

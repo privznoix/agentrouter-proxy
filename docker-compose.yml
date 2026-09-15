@@ -1,0 +1,9 @@
+services:
+  agentrouter-proxy:
+    build: .
+    image: ghcr.io/privznoix/agentrouter-proxy:latest
+    container_name: agentrouter-proxy
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "127.0.0.1:4020:4020"

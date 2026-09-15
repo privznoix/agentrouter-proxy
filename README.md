@@ -68,6 +68,84 @@ Perintah CLI (setara script PowerShell, lintas OS):
 
 Data runtime (venv, log, PID) disimpan di `~/.agentrouter-proxy/` sehingga aman dari update package.
 
+## Docker (deploy ke VPS)
+
+Proxy bisa dibungkus menjadi image Docker (Python + uvicorn langsung, tanpa launcher npm/venv) lalu didistribusikan via GitHub Container Registry.
+
+### Build dan push ke ghcr.io
+
+Dari komputer lokal (perlu Docker):
+
+```powershell
+docker build -t ghcr.io/privznoix/agentrouter-proxy:latest .
+docker login ghcr.io
+docker push ghcr.io/privznoix/agentrouter-proxy:latest
+```
+
+> Package ghcr default-nya **private**. Agar VPS bisa `docker pull` tanpa login, set package menjadi public di halaman GitHub Packages, atau buat PAT dengan scope `read:packages` lalu `docker login ghcr.io` di VPS.
+
+Alternatif: build dan jalankan lokal dengan Compose (port tetap terikat ke `127.0.0.1`):
+
+```powershell
+Copy-Item .env.example .env
+docker compose up -d
+```
+
+### Menjalankan di VPS
+
+1. Login ke registry (jika package private) lalu siapkan folder kerja:
+
+   ```bash
+   mkdir -p ~/agentrouter-proxy && cd ~/agentrouter-proxy
+   ```
+
+2. Buat `.env` (salin dari `.env.example` di repo), isi minimal:
+
+   ```dotenv
+   AGENTROUTER_API_KEY=<api-key-agentrouter>
+   AGENTROUTER_PROXY_API_KEY=<token-kuat-untuk-proxy>
+   ```
+
+   > Karena proxy akan bisa diakses melalui reverse proxy, ganti `AGENTROUTER_PROXY_API_KEY` dari default `local-agentrouter` ke token yang panjang/acak.
+
+3. Buat `docker-compose.yml` di folder tersebut:
+
+   ```yaml
+   services:
+     agentrouter-proxy:
+       image: ghcr.io/privznoix/agentrouter-proxy:latest
+       container_name: agentrouter-proxy
+       restart: unless-stopped
+       env_file: .env
+       ports:
+         - "127.0.0.1:4020:4020"
+   ```
+
+4. Jalankan dan verifikasi:
+
+   ```bash
+   docker compose up -d
+   curl -H "Authorization: Bearer <AGENTROUTER_PROXY_API_KEY>" http://127.0.0.1:4020/health
+   ```
+
+Port hanya terikat ke `127.0.0.1` sehingga tidak terekspos langsung ke internet. Akses dari luar dilakukan lewat reverse proxy (mis. Caddy/nginx dengan HTTPS) atau SSH tunnel. Contoh blok Caddy:
+
+```caddyfile
+ai.contoh.com {
+    reverse_proxy 127.0.0.1:4020
+}
+```
+
+Operasional:
+
+| Perintah | Fungsi |
+| --- | --- |
+| `docker logs -f agentrouter-proxy` | Melihat log aplikasi (stdout). |
+| `docker compose pull && docker compose up -d` | Update ke image terbaru. |
+| `docker compose down` | Menghentikan dan menghapus container. |
+
+Log aplikasi juga tetap ditulis ke `/app/logs` di dalam container; mount volume `./logs:/app/logs` pada `docker-compose.yml` jika ingin log persisten/capture moderation tersimpan di host.
+
 ## Konfigurasi
 
 Simpan API key AgentRouter sebagai environment variable user Windows:
