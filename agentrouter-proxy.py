@@ -448,6 +448,9 @@ _PROTECTED_KEYS = frozenset({
     "type",
     "role",
     "id",
+    "tool_call_id",
+    "call_id",
+    "tool_calls",
     "url",
     "image_url",
     "arguments",
@@ -562,9 +565,16 @@ def sanitize_all_words(payload: Any) -> tuple[Any, int]:
     return new_payload, changes
 
 
-def is_content_blocked_error(error_text: str) -> bool:
+def is_content_blocked_error(error_text: str, status_code: int = 0) -> bool:
+    if status_code == 405:
+        return True
     lowered = error_text.lower()
-    return "content-blocked" in lowered or "content_blocked" in lowered
+    return (
+        "content-blocked" in lowered
+        or "content_blocked" in lowered
+        or "potential threats to the server's security" in lowered
+        or "errors.aliyun.com" in lowered
+    )
 
 
 # ============================================================
@@ -721,6 +731,8 @@ async def translate_user_messages_for_retry(
 REASONING_EFFORT_CONFLICT_MARKERS = (
     "function tools with reasoning_effort",
     "set reasoning_effort to 'none'",
+    "content[].thinking",
+    "thinking mode must be passed back",
 )
 
 _reasoning_effort_conflict_models: set[str] = set()
@@ -893,6 +905,42 @@ def tool_stats(tools: Any) -> dict[str, Any]:
     result["names"] = names
     result["types"] = type_counts
     return result
+
+
+def normalize_tool_schemas(tools: Any) -> Any:
+    """Ensure every object-type parameter schema has a valid 'required' array.
+    
+    DeepSeek API returns 400 'null is not of type array' if required is missing
+    or null on object parameters.
+    """
+    if not isinstance(tools, list):
+        return tools
+
+    def _fix_schema(s: Any) -> Any:
+        if not isinstance(s, dict):
+            return s
+        fixed = dict(s)
+        if fixed.get("type") == "object":
+            req = fixed.get("required")
+            if req is None or not isinstance(req, list):
+                fixed["required"] = []
+        if "properties" in fixed and isinstance(fixed["properties"], dict):
+            fixed["properties"] = {
+                k: _fix_schema(v) for k, v in fixed["properties"].items()
+            }
+        return fixed
+
+    normalized = []
+    for tool in tools:
+        if isinstance(tool, dict) and "function" in tool and isinstance(tool["function"], dict):
+            fn = dict(tool["function"])
+            if "parameters" in fn and isinstance(fn["parameters"], dict):
+                fn["parameters"] = _fix_schema(fn["parameters"])
+            normalized.append({**tool, "function": fn})
+        else:
+            normalized.append(tool)
+    return normalized
+
 
 # ============================================================
 # TOOL OUTPUT COMPRESSION
@@ -1453,6 +1501,10 @@ async def chat_completions(
     upstream_payload = dict(payload)
     upstream_payload["model"] = target_model
 
+    # Normalize tool schemas so DeepSeek never fails on missing 'required' array.
+    if upstream_payload.get("tools"):
+        upstream_payload["tools"] = normalize_tool_schemas(upstream_payload["tools"])
+
     # --------------------------------------------------------
     # Diagnostic mode: strip tool definitions.
     # --------------------------------------------------------
@@ -1483,6 +1535,7 @@ async def chat_completions(
         and upstream_payload.get("tools")
     ):
         upstream_payload["reasoning_effort"] = "none"
+        upstream_payload.pop("thinking", None)
         upstream_user_agent_override = ALT_USER_AGENT
 
         logger.warning(
@@ -1802,6 +1855,7 @@ async def chat_completions(
             and is_reasoning_effort_conflict_error(error_text)
         ):
             upstream_payload["reasoning_effort"] = "none"
+            upstream_payload.pop("thinking", None)
             _reasoning_effort_conflict_models.add(target_model)
             headers = get_upstream_headers(ALT_USER_AGENT)
 
@@ -1975,7 +2029,7 @@ async def chat_completions(
         # an instruction for the assistant to reply in Indonesian.
         if (
             TRANSLATE_CONTENT_BLOCKED == "auto"
-            and is_content_blocked_error(error_text)
+            and is_content_blocked_error(error_text, upstream_response.status_code)
         ):
             translated_messages, translated_count = (
                 await translate_user_messages_for_retry(
