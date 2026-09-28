@@ -33,6 +33,18 @@ class DeepSeekCompatibilityTests(unittest.TestCase):
         self.assertEqual(result[1]["reasoning_content"], "")
         self.assertNotIn("reasoning_content", messages[1])
 
+    def test_null_reasoning_content_gets_empty_placeholder(self):
+        messages = [{
+            "role": "assistant",
+            "tool_calls": [{"id": "call_1"}],
+            "reasoning_content": None,
+        }]
+
+        result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(result[0]["reasoning_content"], "")
+
     def test_existing_reasoning_content_is_preserved(self):
         messages = [{
             "role": "assistant",

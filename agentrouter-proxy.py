@@ -411,7 +411,7 @@ def ensure_deepseek_tool_reasoning_history(
             isinstance(message, dict)
             and message.get("role") == "assistant"
             and message.get("tool_calls")
-            and "reasoning_content" not in message
+            and message.get("reasoning_content") is None
         ):
             message = dict(message)
             message["reasoning_content"] = ""
