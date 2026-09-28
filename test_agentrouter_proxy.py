@@ -34,16 +34,57 @@ class DeepSeekCompatibilityTests(unittest.TestCase):
         self.assertNotIn("reasoning_content", messages[1])
 
     def test_null_reasoning_content_gets_empty_placeholder(self):
-        messages = [{
-            "role": "assistant",
-            "tool_calls": [{"id": "call_1"}],
-            "reasoning_content": None,
-        }]
+        messages = [
+            {
+                "role": "assistant",
+                "reasoning_content": None,
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+        ]
 
         result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
 
         self.assertEqual(changed, 1)
         self.assertEqual(result[0]["reasoning_content"], "")
+
+    def test_plain_chat_history_is_not_modified(self):
+        messages = [{"role": "assistant", "content": "Hello"}]
+
+        result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
+
+        self.assertEqual(changed, 0)
+        self.assertIs(result, messages)
+
+    def test_cached_reasoning_is_restored_from_following_tool_message(self):
+        proxy._deepseek_reasoning_by_tool_call.clear()
+        proxy.cache_deepseek_tool_reasoning(["call_7"], "private reasoning")
+        messages = [
+            {"role": "assistant", "content": ""},
+            {"role": "tool", "tool_call_id": "call_7", "content": "ok"},
+        ]
+
+        result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(result[0]["reasoning_content"], "private reasoning")
+        proxy._deepseek_reasoning_by_tool_call.clear()
+
+    def test_cached_reasoning_replaces_router_placeholder(self):
+        proxy._deepseek_reasoning_by_tool_call.clear()
+        proxy.cache_deepseek_tool_reasoning(["call_8"], "actual reasoning")
+        messages = [
+            {
+                "role": "assistant",
+                "reasoning_content": "router placeholder",
+            },
+            {"role": "tool", "tool_call_id": "call_8", "content": "ok"},
+        ]
+
+        result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(result[0]["reasoning_content"], "actual reasoning")
+        proxy._deepseek_reasoning_by_tool_call.clear()
 
     def test_existing_reasoning_content_is_preserved(self):
         messages = [{
@@ -260,6 +301,33 @@ class ResponsesStreamingTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"name":"lookup"', joined)
         self.assertIn('"arguments":"{\\\"id\\\":9}"', joined)
         self.assertIn('"finish_reason":"tool_calls"', joined)
+
+
+class DeepSeekStreamingTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stream_reasoning_is_cached_by_tool_call_id(self):
+        proxy._deepseek_reasoning_by_tool_call.clear()
+        wire = b"".join([
+            b'data: {"choices":[{"delta":{"reasoning_content":"think "}}]}\n\n',
+            b"data: null\n\n",
+            b'data: {"choices":[{"delta":{"reasoning_content":"more"}}]}\n\n',
+            b'data: {"choices":[{"delta":{"tool_calls":[{"id":"call_9"}]}}]}\n\n',
+            b"data: [DONE]\n\n",
+        ])
+
+        async def source():
+            yield wire[:31]
+            yield wire[31:]
+
+        output = []
+        async for chunk in proxy.capture_deepseek_reasoning_stream(source()):
+            output.append(chunk)
+
+        self.assertEqual(b"".join(output), wire)
+        self.assertEqual(
+            proxy.get_deepseek_tool_reasoning(["call_9"]),
+            "think more",
+        )
+        proxy._deepseek_reasoning_by_tool_call.clear()
 
 
 class AstraRoutingTests(unittest.IsolatedAsyncioTestCase):

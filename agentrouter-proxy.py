@@ -396,6 +396,88 @@ def openai_error(
     )
 
 
+DEEPSEEK_REASONING_CACHE_TTL = 3600.0
+DEEPSEEK_REASONING_CACHE_MAX = 512
+_deepseek_reasoning_by_tool_call: dict[str, tuple[float, str]] = {}
+
+
+def cache_deepseek_tool_reasoning(
+    tool_call_ids: list[str],
+    reasoning_content: str,
+) -> None:
+    if not tool_call_ids or not reasoning_content:
+        return
+
+    now = time.time()
+    expired_before = now - DEEPSEEK_REASONING_CACHE_TTL
+
+    for call_id, (stored_at, _) in list(
+        _deepseek_reasoning_by_tool_call.items()
+    ):
+        if stored_at < expired_before:
+            _deepseek_reasoning_by_tool_call.pop(call_id, None)
+
+    for call_id in tool_call_ids:
+        if call_id:
+            _deepseek_reasoning_by_tool_call[call_id] = (
+                now,
+                reasoning_content,
+            )
+
+    overflow = len(_deepseek_reasoning_by_tool_call) - DEEPSEEK_REASONING_CACHE_MAX
+    if overflow > 0:
+        oldest = sorted(
+            _deepseek_reasoning_by_tool_call,
+            key=lambda call_id: _deepseek_reasoning_by_tool_call[call_id][0],
+        )
+        for call_id in oldest[:overflow]:
+            _deepseek_reasoning_by_tool_call.pop(call_id, None)
+
+    logger.info(
+        "DEEPSEEK_REASONING_CACHED tool_calls=%d chars=%d",
+        len(tool_call_ids),
+        len(reasoning_content),
+    )
+
+
+def get_deepseek_tool_reasoning(tool_call_ids: list[str]) -> str | None:
+    now = time.time()
+    for call_id in tool_call_ids:
+        cached = _deepseek_reasoning_by_tool_call.get(call_id)
+        if cached is None:
+            continue
+
+        stored_at, reasoning_content = cached
+        if now - stored_at <= DEEPSEEK_REASONING_CACHE_TTL:
+            return reasoning_content
+
+        _deepseek_reasoning_by_tool_call.pop(call_id, None)
+
+    return None
+
+
+def _message_tool_call_ids(messages: list[Any], index: int) -> list[str]:
+    message = messages[index]
+    direct_ids: list[str] = []
+
+    if isinstance(message, dict):
+        for tool_call in message.get("tool_calls") or []:
+            if isinstance(tool_call, dict) and tool_call.get("id"):
+                direct_ids.append(str(tool_call["id"]))
+
+    if direct_ids:
+        return direct_ids
+
+    following_ids: list[str] = []
+    for following in messages[index + 1:]:
+        if not isinstance(following, dict) or following.get("role") != "tool":
+            break
+        if following.get("tool_call_id"):
+            following_ids.append(str(following["tool_call_id"]))
+
+    return following_ids
+
+
 def ensure_deepseek_tool_reasoning_history(
     messages: Any,
 ) -> tuple[Any, int]:
@@ -403,23 +485,112 @@ def ensure_deepseek_tool_reasoning_history(
     if not isinstance(messages, list):
         return messages, 0
 
+    has_tool_history = any(
+        isinstance(message, dict) and message.get("role") == "tool"
+        for message in messages
+    )
+    if not has_tool_history:
+        return messages, 0
+
     normalized: list[Any] = []
     changed = 0
 
-    for message in messages:
-        if (
-            isinstance(message, dict)
-            and message.get("role") == "assistant"
-            and message.get("tool_calls")
-            and message.get("reasoning_content") is None
-        ):
-            message = dict(message)
-            message["reasoning_content"] = ""
-            changed += 1
+    for index, message in enumerate(messages):
+        if isinstance(message, dict) and message.get("role") == "assistant":
+            tool_call_ids = _message_tool_call_ids(messages, index)
+            cached_reasoning = get_deepseek_tool_reasoning(tool_call_ids)
+            desired_reasoning = cached_reasoning or message.get(
+                "reasoning_content"
+            ) or ""
+
+            if message.get("reasoning_content") != desired_reasoning:
+                message = dict(message)
+                message["reasoning_content"] = desired_reasoning
+                changed += 1
 
         normalized.append(message)
 
     return normalized, changed
+
+
+def capture_deepseek_reasoning_response(response_json: Any) -> None:
+    if not isinstance(response_json, dict):
+        return
+
+    for choice in response_json.get("choices") or []:
+        if not isinstance(choice, dict):
+            continue
+        message = choice.get("message")
+        if not isinstance(message, dict):
+            continue
+        reasoning_content = message.get("reasoning_content")
+        if not isinstance(reasoning_content, str):
+            continue
+        tool_call_ids = [
+            str(tool_call["id"])
+            for tool_call in message.get("tool_calls") or []
+            if isinstance(tool_call, dict) and tool_call.get("id")
+        ]
+        cache_deepseek_tool_reasoning(tool_call_ids, reasoning_content)
+
+
+async def capture_deepseek_reasoning_stream(chunks):
+    buffer = b""
+    reasoning_parts: list[str] = []
+    tool_call_ids: set[str] = set()
+
+    try:
+        async for chunk in chunks:
+            buffer += chunk
+
+            while b"\n" in buffer:
+                raw_line, buffer = buffer.split(b"\n", 1)
+                line = raw_line.rstrip(b"\r")
+                if not line.startswith(b"data: "):
+                    continue
+
+                data = line[6:]
+                if data == b"[DONE]":
+                    continue
+
+                try:
+                    event = json.loads(data.decode("utf-8"))
+                except Exception:
+                    continue
+
+                if not isinstance(event, dict):
+                    continue
+
+                for choice in event.get("choices") or []:
+                    delta = (
+                        choice.get("delta")
+                        if isinstance(choice, dict)
+                        else None
+                    )
+                    if not isinstance(delta, dict):
+                        continue
+                    reasoning = delta.get("reasoning_content")
+                    if isinstance(reasoning, str):
+                        reasoning_parts.append(reasoning)
+                    for tool_call in delta.get("tool_calls") or []:
+                        if (
+                            isinstance(tool_call, dict)
+                            and tool_call.get("id")
+                        ):
+                            tool_call_ids.add(str(tool_call["id"]))
+
+            yield chunk
+    finally:
+        logger.info(
+            "DEEPSEEK_REASONING_CAPTURE tool_calls=%d chars=%d buffered_bytes=%d",
+            len(tool_call_ids),
+            sum(len(part) for part in reasoning_parts),
+            len(buffer),
+        )
+        cache_deepseek_tool_reasoning(
+            sorted(tool_call_ids),
+            "".join(reasoning_parts),
+        )
 
 
 def payload_fingerprint(value: Any) -> str:
@@ -2068,10 +2239,18 @@ async def chat_completions(
 
     upstream_user_agent_override: str | None = None
 
+    deepseek_tool_mode = (
+        target_model.lower().startswith("deepseek")
+        and bool(upstream_payload.get("tools"))
+    )
+
     if (
         DROP_REASONING_EFFORT == "auto"
         and not route_via_responses
-        and target_model in _reasoning_effort_conflict_models
+        and (
+            deepseek_tool_mode
+            or target_model in _reasoning_effort_conflict_models
+        )
         and upstream_payload.get("tools")
     ):
         upstream_payload["reasoning_effort"] = "none"
@@ -2079,7 +2258,8 @@ async def chat_completions(
         upstream_user_agent_override = ALT_USER_AGENT
 
         logger.warning(
-            "REASONING_EFFORT_NONE mode=learned model=%s user_agent=%s",
+            "REASONING_EFFORT_NONE mode=%s model=%s user_agent=%s",
+            "deepseek-tools" if deepseek_tool_mode else "learned",
             target_model,
             ALT_USER_AGENT,
         )
@@ -2324,6 +2504,10 @@ async def chat_completions(
                             response_chunks,
                             str(requested_model),
                         )
+                    elif target_model.lower().startswith("deepseek"):
+                        response_chunks = capture_deepseek_reasoning_stream(
+                            response_chunks
+                        )
                     async for chunk in response_chunks:
                         if chunk:
                             yield chunk
@@ -2401,6 +2585,8 @@ async def chat_completions(
                 response_json,
                 str(requested_model),
             )
+        elif target_model.lower().startswith("deepseek"):
+            capture_deepseek_reasoning_response(response_json)
 
         return JSONResponse(
             content=response_json,

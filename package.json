@@ -1,6 +1,6 @@
 {
   "name": "agentrouter-proxy",
-  "version": "1.1.2",
+  "version": "1.1.3",
   "description": "Local OpenAI-compatible proxy for AgentRouter with moderation resilience (keyword sanitizer + Indonesian auto-translate retry)",
   "license": "MIT",
   "bin": {
