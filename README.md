@@ -77,10 +77,13 @@ Proxy bisa dibungkus menjadi image Docker (Python + uvicorn langsung, tanpa laun
 Dari komputer lokal (perlu Docker):
 
 ```powershell
-docker build -t ghcr.io/privznoix/agentrouter-proxy:latest .
+docker build --build-arg VERSION=1.1.0 -t ghcr.io/privznoix/agentrouter-proxy:1.1.0 -t ghcr.io/privznoix/agentrouter-proxy:latest .
 docker login ghcr.io
+docker push ghcr.io/privznoix/agentrouter-proxy:1.1.0
 docker push ghcr.io/privznoix/agentrouter-proxy:latest
 ```
+
+Push tag Git `v1.1.0` juga menjalankan GitHub Actions yang membangun image `linux/amd64` dan memublikasikan tag GHCR `1.1.0`, `1.1`, serta `latest`.
 
 > Package ghcr default-nya **private**. Agar VPS bisa `docker pull` tanpa login, set package menjadi public di halaman GitHub Packages, atau buat PAT dengan scope `read:packages` lalu `docker login ghcr.io` di VPS.
 
@@ -177,7 +180,7 @@ Environment variable utama:
 | `AGENTROUTER_DEBUG` | Tidak | `true` | Mengaktifkan log diagnostik. |
 | `AGENTROUTER_COMPRESS_TOOL_OUTPUT` | Tidak | `true` | Mengompresi output tool besar. |
 | `AGENTROUTER_STRIP_IMAGES` | Tidak | `auto` | Pilihan: `auto`, `always`, atau `off`. |
-| `AGENTROUTER_DROP_REASONING_EFFORT` | Tidak | `auto` | Saat upstream 400 karena kombinasi function tools + `reasoning_effort` (mis. `gpt-6-astra`), retry sekali dengan `reasoning_effort="none"` + User-Agent alternatif, lalu ingat model tersebut. Pilihan: `auto` atau `off`. |
+| `AGENTROUTER_DROP_REASONING_EFFORT` | Tidak | `auto` | Untuk model Chat Completions yang menolak kombinasi function tools + `reasoning_effort`, retry sekali dengan `reasoning_effort="none"` + User-Agent alternatif, lalu ingat model tersebut. Astra menggunakan Responses API dan tidak memakai workaround ini. Pilihan: `auto` atau `off`. |
 | `AGENTROUTER_ALT_USER_AGENT` | Tidak | `opencode/1.0.0` | User-Agent alternatif untuk retry `reasoning_effort` (gateway menyuntikkan `reasoning_effort` untuk client bergaya codex). |
 | `AGENTROUTER_SANITIZE_MODERATION` | Tidak | `auto` | Sanitizer untuk error keyword upstream `sensitive_words_detected`. `auto`: defang frasa pemicu known sebelum kirim + retry sekali dengan pemisahan kata (zero-width space) jika masih kena; `known`: hanya defang frasa known; `off`: mati. |
 | `AGENTROUTER_MODERATION_TRIGGERS_EXTRA` | Tidak | (kosong) | Frasa pemicu tambahan untuk defang pre-send, dipisah `||`. |
@@ -289,7 +292,8 @@ Jika proxy gagal berjalan, periksa `logs\uvicorn-error.log` dan pastikan `AGENTR
 
 ## Catatan API
 
-- Endpoint aktif: `GET /health`, `GET /v1/models`, dan `POST /v1/chat/completions`.
+- Endpoint aktif: `GET /health`, `GET /v1/models`, `POST /v1/chat/completions`, dan `POST /v1/responses`.
 - Semua endpoint membutuhkan header `Authorization: Bearer <AGENTROUTER_PROXY_API_KEY>`.
 - `GET /v1/models` mem-proxy daftar model dari upstream `GET /v1/models` dengan prefix `arp/`.
-- `POST /v1/responses` belum diimplementasikan dan mengembalikan HTTP `501`.
+- Request `gpt-6-astra` yang masuk melalui `POST /v1/chat/completions` otomatis diteruskan ke upstream Responses API. Payload, respons non-streaming, streaming SSE, dan function calls dikonversi kembali ke format Chat Completions untuk kompatibilitas client.
+- `POST /v1/responses` meneruskan payload Responses API secara langsung ke upstream, termasuk mode streaming.

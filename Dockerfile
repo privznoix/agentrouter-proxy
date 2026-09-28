@@ -2,6 +2,12 @@
 
 FROM python:3.11-slim
 
+ARG VERSION=dev
+
+LABEL org.opencontainers.image.source="https://github.com/privznoix/agentrouter-proxy" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.description="OpenAI-compatible proxy for AgentRouter"
+
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
