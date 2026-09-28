@@ -83,8 +83,6 @@ docker push ghcr.io/privznoix/agentrouter-proxy:1.1.0
 docker push ghcr.io/privznoix/agentrouter-proxy:latest
 ```
 
-Push tag Git `v1.1.0` juga menjalankan GitHub Actions yang membangun image `linux/amd64` dan memublikasikan tag GHCR `1.1.0`, `1.1`, serta `latest`.
-
 > Package ghcr default-nya **private**. Agar VPS bisa `docker pull` tanpa login, set package menjadi public di halaman GitHub Packages, atau buat PAT dengan scope `read:packages` lalu `docker login ghcr.io` di VPS.
 
 Alternatif: build dan jalankan lokal dengan Compose (port tetap terikat ke `127.0.0.1`):
