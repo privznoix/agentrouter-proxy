@@ -15,6 +15,38 @@ assert SPEC.loader is not None
 SPEC.loader.exec_module(proxy)
 
 
+class DeepSeekCompatibilityTests(unittest.TestCase):
+    def test_tool_history_gets_empty_reasoning_placeholder(self):
+        messages = [
+            {"role": "user", "content": "Check it"},
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [{"id": "call_1"}],
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "ok"},
+        ]
+
+        result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
+
+        self.assertEqual(changed, 1)
+        self.assertEqual(result[1]["reasoning_content"], "")
+        self.assertNotIn("reasoning_content", messages[1])
+
+    def test_existing_reasoning_content_is_preserved(self):
+        messages = [{
+            "role": "assistant",
+            "tool_calls": [{"id": "call_1"}],
+            "reasoning_content": "retained",
+        }]
+
+        result, changed = proxy.ensure_deepseek_tool_reasoning_history(messages)
+
+        self.assertEqual(changed, 0)
+        self.assertIs(result[0], messages[0])
+        self.assertEqual(result[0]["reasoning_content"], "retained")
+
+
 class ResponsesCompatibilityTests(unittest.TestCase):
     def test_only_astra_routes_to_responses(self):
         self.assertTrue(proxy.uses_responses_api("gpt-6-astra"))

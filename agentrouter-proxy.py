@@ -396,6 +396,32 @@ def openai_error(
     )
 
 
+def ensure_deepseek_tool_reasoning_history(
+    messages: Any,
+) -> tuple[Any, int]:
+    """Add the reasoning placeholder DeepSeek requires for tool continuations."""
+    if not isinstance(messages, list):
+        return messages, 0
+
+    normalized: list[Any] = []
+    changed = 0
+
+    for message in messages:
+        if (
+            isinstance(message, dict)
+            and message.get("role") == "assistant"
+            and message.get("tool_calls")
+            and "reasoning_content" not in message
+        ):
+            message = dict(message)
+            message["reasoning_content"] = ""
+            changed += 1
+
+        normalized.append(message)
+
+    return normalized, changed
+
+
 def payload_fingerprint(value: Any) -> str:
     try:
         serialized = json.dumps(
@@ -2063,6 +2089,19 @@ async def chat_completions(
     # --------------------------------------------------------
 
     messages = upstream_payload.get("messages")
+
+    if target_model.lower().startswith("deepseek"):
+        messages, reasoning_history_count = (
+            ensure_deepseek_tool_reasoning_history(messages)
+        )
+        upstream_payload["messages"] = messages
+
+        if reasoning_history_count:
+            logger.info(
+                "DEEPSEEK_REASONING_HISTORY_NORMALIZED model=%s assistant_messages=%d",
+                target_model,
+                reasoning_history_count,
+            )
 
     if STRIP_TOOL_MESSAGES:
         messages, strip_stats = strip_tool_messages(messages)

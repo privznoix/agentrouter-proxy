@@ -187,6 +187,10 @@ Environment variable utama:
 | `AGENTROUTER_LOG_DIR` | Tidak | `<folder proyek>\logs` | Lokasi log aplikasi dan `moderation-captures` (dipakai launcher npm). |
 | `AGENTROUTER_MODELS_CACHE_TTL` | Tidak | `300` | Umur cache daftar model dari upstream (detik). |
 
+Untuk DeepSeek, proxy otomatis menambahkan `reasoning_content: ""` pada riwayat
+pesan assistant yang memiliki tool call jika client tidak menyimpannya. Ini
+mencegah error `content[].thinking ... must be passed back` pada kelanjutan tool.
+
 ## Daftar Model Dinamis
 
 Proxy tidak lagi mendefinisikan model secara hardcoded. Daftar model diambil dari endpoint upstream `GET /v1/models` dan di-cache selama `AGENTROUTER_MODELS_CACHE_TTL` detik (default 300).
